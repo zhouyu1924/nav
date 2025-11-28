@@ -19,7 +19,9 @@ import {
   Upload,
   Shield,
   FileJson,
-  AlertTriangle
+  AlertTriangle,
+  Cloud,
+  RefreshCw
 } from 'lucide-react';
 
 export {
@@ -43,5 +45,7 @@ export {
   Upload,
   Shield,
   FileJson,
-  AlertTriangle
+  AlertTriangle,
+  Cloud,
+  RefreshCw
 };

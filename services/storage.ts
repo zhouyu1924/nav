@@ -1,8 +1,9 @@
-import { LinkItem, DEFAULT_LINKS, SiteConfig, BackupData } from '../types';
+import { LinkItem, DEFAULT_LINKS, SiteConfig, BackupData, SyncConfig } from '../types';
 
 const LINKS_KEY = 'nebula_links';
-const AUTH_KEY = 'nebula_auth';
+const AUTH_KEY = 'nebula_auth'; // Stores password
 const CONFIG_KEY = 'nebula_config';
+const SYNC_KEY = 'nebula_sync';
 
 const DEFAULT_CONFIG: SiteConfig = {
   title: 'Zhou Yu Nav',
@@ -45,7 +46,7 @@ export const StorageService = {
     }
   },
 
-  // Auth Methods
+  // --- Auth Methods ---
   setPassword: (password: string) => {
     localStorage.setItem(AUTH_KEY, password);
   },
@@ -55,17 +56,37 @@ export const StorageService = {
     return stored === input;
   },
 
+  getPassword: (): string | null => {
+    return localStorage.getItem(AUTH_KEY);
+  },
+
   hasPasswordSet: (): boolean => {
     return !!localStorage.getItem(AUTH_KEY);
   },
   
-  // Data Management
+  // --- Sync Config ---
+  getSyncConfig: (): SyncConfig | null => {
+    try {
+      const stored = localStorage.getItem(SYNC_KEY);
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  },
+
+  saveSyncConfig: (config: SyncConfig) => {
+    localStorage.setItem(SYNC_KEY, JSON.stringify(config));
+  },
+
+  // --- Data Management ---
   createBackup: (links: LinkItem[], config: SiteConfig): string => {
+    const password = localStorage.getItem(AUTH_KEY) || '';
     const backup: BackupData = {
       version: 1,
       date: Date.now(),
       links,
-      siteConfig: config
+      siteConfig: config,
+      authCheck: password // Include auth in backup so we can restore password on new devices
     };
     return JSON.stringify(backup, null, 2);
   },
@@ -85,7 +106,6 @@ export const StorageService = {
   },
 
   logout: () => {
-    // Session is handled in React state, nothing to clear from localstorage usually
-    // unless we were using tokens.
+    // Client-side only
   }
 };

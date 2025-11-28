@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { LinkItem, SiteConfig } from '../types';
+import { LinkItem, SiteConfig, SyncConfig } from '../types';
 import { StorageService } from '../services/storage';
+import { GitHubService } from '../services/github';
 import { Modal } from '../components/Modal';
 import { 
   Plus, 
@@ -13,12 +14,13 @@ import {
   Settings,
   Download,
   Upload,
-  Shield,
-  FileJson,
   AlertTriangle,
-  Check
+  Check,
+  Cloud,
+  RefreshCw,
+  ExternalLink
 } from '../components/Icons';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 
 interface AdminProps {
   links: LinkItem[];
@@ -27,7 +29,7 @@ interface AdminProps {
   setSiteConfig: (config: SiteConfig) => void;
 }
 
-type SettingsTab = 'general' | 'security' | 'data';
+type SettingsTab = 'general' | 'security' | 'sync' | 'data';
 
 export const Admin: React.FC<AdminProps> = ({ links, setLinks, siteConfig, setSiteConfig }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -57,6 +59,13 @@ export const Admin: React.FC<AdminProps> = ({ links, setLinks, siteConfig, setSi
     logoUrl: ''
   });
 
+  // Sync Form
+  const [syncConfig, setSyncConfig] = useState<Partial<SyncConfig>>({
+    githubToken: '',
+    gistId: ''
+  });
+  const [syncStatus, setSyncStatus] = useState({ loading: false, message: '', type: '' });
+
   // Password Change State
   const [passForm, setPassForm] = useState({
     currentPassword: '',
@@ -69,6 +78,11 @@ export const Admin: React.FC<AdminProps> = ({ links, setLinks, siteConfig, setSi
   useEffect(() => {
     const hasPass = StorageService.hasPasswordSet();
     setIsFirstRun(!hasPass);
+    
+    const storedSync = StorageService.getSyncConfig();
+    if (storedSync) {
+      setSyncConfig(storedSync);
+    }
   }, []);
 
   const handleLogin = (e: React.FormEvent) => {
@@ -139,6 +153,12 @@ export const Admin: React.FC<AdminProps> = ({ links, setLinks, siteConfig, setSi
     setLinks(newLinks);
     StorageService.saveLinks(newLinks);
     setIsModalOpen(false);
+    
+    // Auto sync if enabled
+    if (syncConfig.enabled && syncConfig.githubToken && syncConfig.gistId) {
+      // We don't await this to keep UI snappy, but in prod we might show a spinner
+      handlePerformSync(syncConfig.githubToken, syncConfig.gistId, newLinks, siteConfig);
+    }
   };
 
   const handleDelete = (id: string) => {
@@ -146,6 +166,10 @@ export const Admin: React.FC<AdminProps> = ({ links, setLinks, siteConfig, setSi
       const newLinks = links.filter(l => l.id !== id);
       setLinks(newLinks);
       StorageService.saveLinks(newLinks);
+      
+      if (syncConfig.enabled && syncConfig.githubToken && syncConfig.gistId) {
+        handlePerformSync(syncConfig.githubToken, syncConfig.gistId, newLinks, siteConfig);
+      }
     }
   };
 
@@ -154,6 +178,10 @@ export const Admin: React.FC<AdminProps> = ({ links, setLinks, siteConfig, setSi
     setSettingsData({ ...siteConfig });
     setPassForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
     setPassMessage({ type: '', text: '' });
+    
+    const storedSync = StorageService.getSyncConfig();
+    if (storedSync) setSyncConfig(storedSync);
+    
     setActiveTab('general');
     setIsSettingsModalOpen(true);
   };
@@ -162,7 +190,102 @@ export const Admin: React.FC<AdminProps> = ({ links, setLinks, siteConfig, setSi
     e.preventDefault();
     setSiteConfig(settingsData);
     StorageService.saveSiteConfig(settingsData);
+    
+    if (syncConfig.enabled && syncConfig.githubToken && syncConfig.gistId) {
+      handlePerformSync(syncConfig.githubToken, syncConfig.gistId, links, settingsData);
+    }
+    
     setIsSettingsModalOpen(false);
+  };
+
+  // --- Sync Logic ---
+  const handlePerformSync = async (token: string, gistId: string, currentLinks: LinkItem[], currentConfig: SiteConfig) => {
+    try {
+      const backupStr = StorageService.createBackup(currentLinks, currentConfig);
+      const backupData = JSON.parse(backupStr);
+      await GitHubService.updateGist(token, gistId, backupData);
+      
+      const newSyncConfig = {
+        enabled: true,
+        githubToken: token,
+        gistId: gistId,
+        lastSync: Date.now()
+      };
+      setSyncConfig(newSyncConfig);
+      StorageService.saveSyncConfig(newSyncConfig);
+      return true;
+    } catch (e) {
+      console.error(e);
+      return false;
+    }
+  };
+
+  const handleSetupSync = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!syncConfig.githubToken) return;
+
+    setSyncStatus({ loading: true, message: 'Validating token...', type: 'info' });
+
+    const isValid = await GitHubService.validateToken(syncConfig.githubToken);
+    if (!isValid) {
+      setSyncStatus({ loading: false, message: 'Invalid GitHub Token.', type: 'error' });
+      return;
+    }
+
+    try {
+      let gistId = syncConfig.gistId;
+      const backupStr = StorageService.createBackup(links, siteConfig);
+      const backupData = JSON.parse(backupStr);
+
+      if (!gistId) {
+        setSyncStatus({ loading: true, message: 'Creating new private Gist...', type: 'info' });
+        gistId = await GitHubService.createGist(syncConfig.githubToken, backupData);
+      } else {
+        setSyncStatus({ loading: true, message: 'Updating existing Gist...', type: 'info' });
+        await GitHubService.updateGist(syncConfig.githubToken, gistId, backupData);
+      }
+
+      const newConfig: SyncConfig = {
+        enabled: true,
+        githubToken: syncConfig.githubToken,
+        gistId: gistId,
+        lastSync: Date.now()
+      };
+
+      StorageService.saveSyncConfig(newConfig);
+      setSyncConfig(newConfig);
+      setSyncStatus({ loading: false, message: 'Sync enabled successfully! Data is now safe in Cloud.', type: 'success' });
+    } catch (e) {
+      setSyncStatus({ loading: false, message: 'Failed to sync. Check network or permissions.', type: 'error' });
+    }
+  };
+
+  const handlePullFromCloud = async () => {
+     if (!syncConfig.githubToken || !syncConfig.gistId) return;
+     
+     if (!window.confirm("This will overwrite your local data with data from the Cloud. Continue?")) return;
+
+     setSyncStatus({ loading: true, message: 'Downloading data...', type: 'info' });
+     try {
+       const data = await GitHubService.getGist(syncConfig.githubToken, syncConfig.gistId);
+       if (data) {
+         setLinks(data.links);
+         setSiteConfig(data.siteConfig);
+         StorageService.saveLinks(data.links);
+         StorageService.saveSiteConfig(data.siteConfig);
+         
+         // If password exists in backup, restore it
+         if (data.authCheck) {
+            StorageService.setPassword(data.authCheck);
+         }
+
+         setSyncStatus({ loading: false, message: 'Data restored from Cloud!', type: 'success' });
+       } else {
+         throw new Error("Empty data");
+       }
+     } catch (e) {
+       setSyncStatus({ loading: false, message: 'Failed to download data.', type: 'error' });
+     }
   };
 
   const handleChangePassword = (e: React.FormEvent) => {
@@ -175,7 +298,6 @@ export const Admin: React.FC<AdminProps> = ({ links, setLinks, siteConfig, setSi
       return;
     }
 
-    // Validate new
     if (passForm.newPassword.length < 4) {
       setPassMessage({ type: 'error', text: 'New password must be at least 4 characters.' });
       return;
@@ -187,8 +309,13 @@ export const Admin: React.FC<AdminProps> = ({ links, setLinks, siteConfig, setSi
     }
 
     StorageService.setPassword(passForm.newPassword);
-    setPassMessage({ type: 'success', text: 'Password updated successfully!' });
+    setPassMessage({ type: 'success', text: 'Password updated successfully! Don\'t forget to Sync.' });
     setPassForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+    
+    // Trigger sync to save new password to cloud
+    if (syncConfig.enabled && syncConfig.githubToken && syncConfig.gistId) {
+       handlePerformSync(syncConfig.githubToken, syncConfig.gistId, links, siteConfig);
+    }
   };
 
   const handleExportData = () => {
@@ -221,6 +348,8 @@ export const Admin: React.FC<AdminProps> = ({ links, setLinks, siteConfig, setSi
             setSiteConfig(result.siteConfig);
             StorageService.saveLinks(result.links);
             StorageService.saveSiteConfig(result.siteConfig);
+            if (result.authCheck) StorageService.setPassword(result.authCheck);
+            
             alert('Import successful!');
             setIsSettingsModalOpen(false);
           }
@@ -257,7 +386,7 @@ export const Admin: React.FC<AdminProps> = ({ links, setLinks, siteConfig, setSi
             {isFirstRun && (
               <div className="mt-3 bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 text-xs text-blue-300 text-left flex gap-2">
                  <AlertTriangle size={16} className="shrink-0" />
-                 <span>Important: This password is stored in your browser. If you clear cache or switch browsers, you may need to reset it.</span>
+                 <span>Important: After logging in, go to Settings &gt; Cloud Sync to enable permanent storage.</span>
               </div>
             )}
           </div>
@@ -305,11 +434,13 @@ export const Admin: React.FC<AdminProps> = ({ links, setLinks, siteConfig, setSi
           <div className="flex items-center gap-2 sm:gap-4">
              <button 
                onClick={handleOpenSettings}
-               className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-all text-sm font-medium"
+               className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all text-sm font-medium border ${
+                 syncConfig.enabled ? 'border-green-500/20 bg-green-500/10 text-green-400' : 'border-transparent text-slate-400 hover:text-white hover:bg-slate-800'
+               }`}
                title="Global Settings"
              >
-               <Settings size={18} />
-               <span className="hidden sm:inline">Settings</span>
+               {syncConfig.enabled ? <Check size={16} /> : <Settings size={18} />}
+               <span className="hidden sm:inline">{syncConfig.enabled ? 'Synced' : 'Settings'}</span>
              </button>
             <div className="h-4 w-px bg-slate-700 mx-1"></div>
             <Link to="/" className="text-sm text-slate-400 hover:text-white transition-colors flex items-center gap-2 px-2">
@@ -426,6 +557,12 @@ export const Admin: React.FC<AdminProps> = ({ links, setLinks, siteConfig, setSi
           >
             General
           </button>
+           <button 
+            className={`flex-1 pb-3 text-sm font-medium transition-colors border-b-2 ${activeTab === 'sync' ? 'border-blue-500 text-blue-400' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
+            onClick={() => setActiveTab('sync')}
+          >
+            Cloud Sync
+          </button>
           <button 
             className={`flex-1 pb-3 text-sm font-medium transition-colors border-b-2 ${activeTab === 'security' ? 'border-blue-500 text-blue-400' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
             onClick={() => setActiveTab('security')}
@@ -436,7 +573,7 @@ export const Admin: React.FC<AdminProps> = ({ links, setLinks, siteConfig, setSi
             className={`flex-1 pb-3 text-sm font-medium transition-colors border-b-2 ${activeTab === 'data' ? 'border-blue-500 text-blue-400' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
             onClick={() => setActiveTab('data')}
           >
-            Data & Backup
+            Data
           </button>
         </div>
 
@@ -469,6 +606,78 @@ export const Admin: React.FC<AdminProps> = ({ links, setLinks, siteConfig, setSi
                 className="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium transition-all"
               >
                 Save General Settings
+              </button>
+            </div>
+          </form>
+        )}
+        
+        {activeTab === 'sync' && (
+          <form onSubmit={handleSetupSync} className="space-y-4">
+            <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4 mb-4">
+               <div className="flex items-start gap-3">
+                 <Cloud className="text-blue-400 shrink-0 mt-1" size={20} />
+                 <div>
+                   <h3 className="text-sm font-semibold text-blue-300">Cross-Browser Persistence</h3>
+                   <p className="text-xs text-blue-200/70 mt-1 leading-relaxed">
+                     Connect to GitHub Gist to save your links and settings permanently. 
+                     Access your dashboard from any device by entering the same credentials.
+                   </p>
+                 </div>
+               </div>
+            </div>
+
+            {syncStatus.message && (
+               <div className={`p-3 rounded-lg text-sm flex items-start gap-2 ${syncStatus.type === 'error' ? 'bg-red-500/10 text-red-400' : syncStatus.type === 'success' ? 'bg-green-500/10 text-green-400' : 'bg-slate-800 text-slate-300'}`}>
+                 {syncStatus.type === 'error' ? <AlertTriangle size={16} /> : <Check size={16} />}
+                 {syncStatus.message}
+               </div>
+            )}
+
+            <div>
+              <label className="block text-sm font-medium text-slate-400 mb-1">
+                GitHub Personal Access Token (Classic)
+                <a href="https://github.com/settings/tokens/new?scopes=gist&description=NebulaNav" target="_blank" rel="noopener noreferrer" className="ml-2 text-blue-400 hover:text-blue-300 text-xs inline-flex items-center gap-1">
+                  Get Token <ExternalLink size={10} />
+                </a>
+              </label>
+              <input 
+                required
+                type="password"
+                value={syncConfig.githubToken}
+                onChange={(e) => setSyncConfig({...syncConfig, githubToken: e.target.value})}
+                className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none font-mono text-sm"
+                placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+              />
+              <p className="text-xs text-slate-500 mt-1">Token must have 'gist' scope permission.</p>
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-slate-400 mb-1">Gist ID (Optional)</label>
+              <input 
+                type="text"
+                value={syncConfig.gistId}
+                onChange={(e) => setSyncConfig({...syncConfig, gistId: e.target.value})}
+                className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none font-mono text-sm"
+                placeholder="Leave empty to create new"
+              />
+              <p className="text-xs text-slate-500 mt-1">If you have data on another device, paste its Gist ID here.</p>
+            </div>
+
+            <div className="pt-4 flex justify-between gap-3">
+               <button
+                type="button"
+                onClick={handlePullFromCloud}
+                disabled={!syncConfig.gistId || !syncConfig.githubToken}
+                className="px-4 py-2 rounded-lg border border-slate-600 text-slate-300 hover:bg-slate-800 hover:text-white transition-all text-sm flex items-center gap-2 disabled:opacity-50"
+              >
+                <RefreshCw size={16} /> Restore from Cloud
+              </button>
+              <button
+                type="submit"
+                disabled={syncStatus.loading}
+                className="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium transition-all flex items-center gap-2 disabled:opacity-50"
+              >
+                {syncStatus.loading ? 'Processing...' : 'Save & Enable Sync'}
               </button>
             </div>
           </form>
@@ -526,17 +735,6 @@ export const Admin: React.FC<AdminProps> = ({ links, setLinks, siteConfig, setSi
 
         {activeTab === 'data' && (
           <div className="space-y-6">
-            <div className="bg-yellow-500/5 border border-yellow-500/10 rounded-lg p-4">
-              <div className="flex items-start gap-3">
-                <AlertTriangle className="text-yellow-500 shrink-0 mt-0.5" size={18} />
-                <div className="text-sm text-yellow-500/90">
-                  <p className="font-semibold mb-1">Important Note</p>
-                  Since this site runs in your browser without a server, your data is stored on this device only. 
-                  To move your links to another computer or browser, please export a backup.
-                </div>
-              </div>
-            </div>
-
             <div className="grid grid-cols-2 gap-4">
               <button
                 onClick={handleExportData}
@@ -547,7 +745,7 @@ export const Admin: React.FC<AdminProps> = ({ links, setLinks, siteConfig, setSi
                 </div>
                 <div className="text-center">
                   <span className="block font-medium text-slate-200">Export Backup</span>
-                  <span className="text-xs text-slate-500">Save data to JSON file</span>
+                  <span className="text-xs text-slate-500">Save local file</span>
                 </div>
               </button>
 
@@ -560,7 +758,7 @@ export const Admin: React.FC<AdminProps> = ({ links, setLinks, siteConfig, setSi
                 </div>
                 <div className="text-center">
                   <span className="block font-medium text-slate-200">Import Backup</span>
-                  <span className="text-xs text-slate-500">Restore from JSON file</span>
+                  <span className="text-xs text-slate-500">Restore local file</span>
                 </div>
               </button>
               <input 

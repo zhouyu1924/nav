@@ -13,6 +13,13 @@ export interface SiteConfig {
   logoUrl: string;
 }
 
+export interface SyncConfig {
+  enabled: boolean;
+  githubToken: string;
+  gistId: string;
+  lastSync: number;
+}
+
 export interface UserConfig {
   passwordHash: string | null;
   theme: 'dark' | 'light';
@@ -23,6 +30,8 @@ export interface BackupData {
   date: number;
   links: LinkItem[];
   siteConfig: SiteConfig;
+  // We include password verification in backup to restore access on new devices
+  authCheck?: string; 
 }
 
 export const DEFAULT_LINKS: LinkItem[] = [
@@ -56,14 +65,6 @@ export const DEFAULT_LINKS: LinkItem[] = [
     url: 'https://chat.openai.com',
     category: 'AI',
     description: 'AI conversation partner.',
-    createdAt: Date.now(),
-  },
-  {
-    id: '5',
-    title: 'Cloudflare',
-    url: 'https://dash.cloudflare.com',
-    category: 'Infrastructure',
-    description: 'Web performance and security.',
     createdAt: Date.now(),
   }
 ];
