@@ -14,8 +14,15 @@ export interface SiteConfig {
 }
 
 export interface UserConfig {
-  passwordHash: string | null; // Simple hash or plain text for this demo scope (locally stored)
+  passwordHash: string | null;
   theme: 'dark' | 'light';
+}
+
+export interface BackupData {
+  version: number;
+  date: number;
+  links: LinkItem[];
+  siteConfig: SiteConfig;
 }
 
 export const DEFAULT_LINKS: LinkItem[] = [

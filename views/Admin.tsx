@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { LinkItem, SiteConfig } from '../types';
 import { StorageService } from '../services/storage';
 import { Modal } from '../components/Modal';
@@ -9,11 +9,14 @@ import {
   LogOut, 
   LayoutDashboard, 
   Lock,
-  Grid,
-  List,
-  Check,
   Globe,
-  Settings
+  Settings,
+  Download,
+  Upload,
+  Shield,
+  FileJson,
+  AlertTriangle,
+  Check
 } from '../components/Icons';
 import { Link, useNavigate } from 'react-router-dom';
 
@@ -24,15 +27,18 @@ interface AdminProps {
   setSiteConfig: (config: SiteConfig) => void;
 }
 
+type SettingsTab = 'general' | 'security' | 'data';
+
 export const Admin: React.FC<AdminProps> = ({ links, setLinks, siteConfig, setSiteConfig }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [password, setPassword] = useState('');
   const [isFirstRun, setIsFirstRun] = useState(false);
-  const navigate = useNavigate();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // CRUD State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<SettingsTab>('general');
   
   const [editingLink, setEditingLink] = useState<LinkItem | null>(null);
   
@@ -45,11 +51,19 @@ export const Admin: React.FC<AdminProps> = ({ links, setLinks, siteConfig, setSi
     icon: ''
   });
 
-  // Settings Form
+  // Settings Forms
   const [settingsData, setSettingsData] = useState<SiteConfig>({
     title: '',
     logoUrl: ''
   });
+
+  // Password Change State
+  const [passForm, setPassForm] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: ''
+  });
+  const [passMessage, setPassMessage] = useState({ type: '', text: '' });
 
   // Check auth status on mount
   useEffect(() => {
@@ -60,6 +74,10 @@ export const Admin: React.FC<AdminProps> = ({ links, setLinks, siteConfig, setSi
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     if (isFirstRun) {
+      if (password.length < 4) {
+        alert("Password is too short");
+        return;
+      }
       StorageService.setPassword(password);
       setIsAuthenticated(true);
       setIsFirstRun(false);
@@ -134,6 +152,9 @@ export const Admin: React.FC<AdminProps> = ({ links, setLinks, siteConfig, setSi
   // --- Settings Operations ---
   const handleOpenSettings = () => {
     setSettingsData({ ...siteConfig });
+    setPassForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+    setPassMessage({ type: '', text: '' });
+    setActiveTab('general');
     setIsSettingsModalOpen(true);
   };
 
@@ -144,13 +165,85 @@ export const Admin: React.FC<AdminProps> = ({ links, setLinks, siteConfig, setSi
     setIsSettingsModalOpen(false);
   };
 
+  const handleChangePassword = (e: React.FormEvent) => {
+    e.preventDefault();
+    setPassMessage({ type: '', text: '' });
+
+    // Verify current
+    if (!StorageService.checkPassword(passForm.currentPassword)) {
+      setPassMessage({ type: 'error', text: 'Current password is incorrect.' });
+      return;
+    }
+
+    // Validate new
+    if (passForm.newPassword.length < 4) {
+      setPassMessage({ type: 'error', text: 'New password must be at least 4 characters.' });
+      return;
+    }
+
+    if (passForm.newPassword !== passForm.confirmPassword) {
+      setPassMessage({ type: 'error', text: 'New passwords do not match.' });
+      return;
+    }
+
+    StorageService.setPassword(passForm.newPassword);
+    setPassMessage({ type: 'success', text: 'Password updated successfully!' });
+    setPassForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+  };
+
+  const handleExportData = () => {
+    const dataStr = StorageService.createBackup(links, siteConfig);
+    const blob = new Blob([dataStr], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `zhou-yu-nav-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleImportClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      if (event.target?.result) {
+        const result = StorageService.processBackup(event.target.result as string);
+        if (result) {
+          if (window.confirm(`Found backup with ${result.links.length} links. This will overwrite your current data. Continue?`)) {
+            setLinks(result.links);
+            setSiteConfig(result.siteConfig);
+            StorageService.saveLinks(result.links);
+            StorageService.saveSiteConfig(result.siteConfig);
+            alert('Import successful!');
+            setIsSettingsModalOpen(false);
+          }
+        } else {
+          alert('Invalid backup file.');
+        }
+      }
+    };
+    reader.readAsText(file);
+    // Reset input
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
   // --- Auth View ---
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
-        <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl">
+        <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl relative overflow-hidden">
+          {/* Background decorative elements */}
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-purple-500"></div>
+          
           <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-slate-800 mb-4 text-blue-500">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-slate-800 mb-4 text-blue-500 shadow-lg shadow-blue-500/10">
               <Lock size={32} />
             </div>
             <h1 className="text-2xl font-bold text-white">
@@ -158,9 +251,15 @@ export const Admin: React.FC<AdminProps> = ({ links, setLinks, siteConfig, setSi
             </h1>
             <p className="text-slate-400 mt-2">
               {isFirstRun 
-                ? 'Create a password to secure your dashboard.' 
+                ? 'Create a secure password for your dashboard.' 
                 : 'Enter your password to manage links.'}
             </p>
+            {isFirstRun && (
+              <div className="mt-3 bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 text-xs text-blue-300 text-left flex gap-2">
+                 <AlertTriangle size={16} className="shrink-0" />
+                 <span>Important: This password is stored in your browser. If you clear cache or switch browsers, you may need to reset it.</span>
+              </div>
+            )}
           </div>
 
           <form onSubmit={handleLogin} className="space-y-4">
@@ -171,20 +270,20 @@ export const Admin: React.FC<AdminProps> = ({ links, setLinks, siteConfig, setSi
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full px-4 py-3 rounded-lg bg-slate-950 border border-slate-700 text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
-                placeholder="Enter password..."
+                placeholder={isFirstRun ? "Create new password" : "Enter password"}
               />
             </div>
             <button 
               type="submit"
               className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-lg transition-all shadow-lg shadow-blue-500/20"
             >
-              {isFirstRun ? 'Set Password' : 'Login'}
+              {isFirstRun ? 'Set Password & Login' : 'Login'}
             </button>
           </form>
           
           <div className="mt-6 text-center">
-             <Link to="/" className="text-sm text-slate-500 hover:text-slate-300">
-               &larr; Back to Home
+             <Link to="/" className="text-sm text-slate-500 hover:text-slate-300 flex items-center justify-center gap-1">
+               <Globe size={14} /> Back to Site
              </Link>
           </div>
         </div>
@@ -198,20 +297,25 @@ export const Admin: React.FC<AdminProps> = ({ links, setLinks, siteConfig, setSi
       <nav className="border-b border-slate-800 bg-slate-900/50 backdrop-blur sticky top-0 z-30">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <LayoutDashboard className="text-blue-500" />
+            <div className="p-2 bg-blue-500/10 rounded-lg">
+              <LayoutDashboard className="text-blue-500" size={20} />
+            </div>
             <span className="font-bold text-lg text-white">Admin Dashboard</span>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 sm:gap-4">
              <button 
                onClick={handleOpenSettings}
-               className="flex items-center gap-2 text-sm text-slate-400 hover:text-white transition-colors"
+               className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-all text-sm font-medium"
                title="Global Settings"
              >
                <Settings size={18} />
                <span className="hidden sm:inline">Settings</span>
              </button>
             <div className="h-4 w-px bg-slate-700 mx-1"></div>
-            <Link to="/" className="text-sm text-slate-400 hover:text-white transition-colors">View Site</Link>
+            <Link to="/" className="text-sm text-slate-400 hover:text-white transition-colors flex items-center gap-2 px-2">
+              <Globe size={16} />
+              <span className="hidden sm:inline">View Site</span>
+            </Link>
             <button 
               onClick={handleLogout}
               className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white transition-all text-sm font-medium ml-2"
@@ -313,47 +417,162 @@ export const Admin: React.FC<AdminProps> = ({ links, setLinks, siteConfig, setSi
       <Modal
         isOpen={isSettingsModalOpen}
         onClose={() => setIsSettingsModalOpen(false)}
-        title="Global Site Settings"
+        title="Admin Settings"
       >
-        <form onSubmit={handleSaveSettings} className="space-y-4">
-           <div>
-            <label className="block text-sm font-medium text-slate-400 mb-1">Site Name</label>
-            <input 
-              required
-              type="text"
-              value={settingsData.title}
-              onChange={(e) => setSettingsData({...settingsData, title: e.target.value})}
-              className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
-              placeholder="e.g. Nebula Nav"
-            />
+        <div className="flex border-b border-slate-700 mb-6">
+          <button 
+            className={`flex-1 pb-3 text-sm font-medium transition-colors border-b-2 ${activeTab === 'general' ? 'border-blue-500 text-blue-400' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
+            onClick={() => setActiveTab('general')}
+          >
+            General
+          </button>
+          <button 
+            className={`flex-1 pb-3 text-sm font-medium transition-colors border-b-2 ${activeTab === 'security' ? 'border-blue-500 text-blue-400' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
+            onClick={() => setActiveTab('security')}
+          >
+            Security
+          </button>
+          <button 
+            className={`flex-1 pb-3 text-sm font-medium transition-colors border-b-2 ${activeTab === 'data' ? 'border-blue-500 text-blue-400' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
+            onClick={() => setActiveTab('data')}
+          >
+            Data & Backup
+          </button>
+        </div>
+
+        {activeTab === 'general' && (
+          <form onSubmit={handleSaveSettings} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-400 mb-1">Site Name</label>
+              <input 
+                required
+                type="text"
+                value={settingsData.title}
+                onChange={(e) => setSettingsData({...settingsData, title: e.target.value})}
+                className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+                placeholder="e.g. Nebula Nav"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-400 mb-1">Site Logo URL</label>
+              <input 
+                type="text"
+                value={settingsData.logoUrl}
+                onChange={(e) => setSettingsData({...settingsData, logoUrl: e.target.value})}
+                className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+                placeholder="https://..."
+              />
+            </div>
+            <div className="pt-4 flex justify-end">
+              <button
+                type="submit"
+                className="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium transition-all"
+              >
+                Save General Settings
+              </button>
+            </div>
+          </form>
+        )}
+
+        {activeTab === 'security' && (
+          <form onSubmit={handleChangePassword} className="space-y-4">
+            {passMessage.text && (
+              <div className={`p-3 rounded-lg text-sm flex items-start gap-2 ${passMessage.type === 'error' ? 'bg-red-500/10 text-red-400' : 'bg-green-500/10 text-green-400'}`}>
+                {passMessage.type === 'error' ? <AlertTriangle size={16} className="mt-0.5"/> : <Check size={16} className="mt-0.5"/>}
+                {passMessage.text}
+              </div>
+            )}
+            <div>
+              <label className="block text-sm font-medium text-slate-400 mb-1">Current Password</label>
+              <input 
+                required
+                type="password"
+                value={passForm.currentPassword}
+                onChange={(e) => setPassForm({...passForm, currentPassword: e.target.value})}
+                className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+              />
+            </div>
+            <div className="pt-2 border-t border-slate-800"></div>
+            <div>
+              <label className="block text-sm font-medium text-slate-400 mb-1">New Password</label>
+              <input 
+                required
+                type="password"
+                value={passForm.newPassword}
+                onChange={(e) => setPassForm({...passForm, newPassword: e.target.value})}
+                className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-400 mb-1">Confirm New Password</label>
+              <input 
+                required
+                type="password"
+                value={passForm.confirmPassword}
+                onChange={(e) => setPassForm({...passForm, confirmPassword: e.target.value})}
+                className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+              />
+            </div>
+            <div className="pt-4 flex justify-end">
+              <button
+                type="submit"
+                className="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium transition-all"
+              >
+                Update Password
+              </button>
+            </div>
+          </form>
+        )}
+
+        {activeTab === 'data' && (
+          <div className="space-y-6">
+            <div className="bg-yellow-500/5 border border-yellow-500/10 rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="text-yellow-500 shrink-0 mt-0.5" size={18} />
+                <div className="text-sm text-yellow-500/90">
+                  <p className="font-semibold mb-1">Important Note</p>
+                  Since this site runs in your browser without a server, your data is stored on this device only. 
+                  To move your links to another computer or browser, please export a backup.
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <button
+                onClick={handleExportData}
+                className="flex flex-col items-center justify-center gap-3 p-6 bg-slate-800/50 hover:bg-slate-800 border border-slate-700 rounded-xl transition-all group"
+              >
+                <div className="p-3 bg-blue-500/10 rounded-full text-blue-400 group-hover:bg-blue-500 group-hover:text-white transition-colors">
+                  <Download size={24} />
+                </div>
+                <div className="text-center">
+                  <span className="block font-medium text-slate-200">Export Backup</span>
+                  <span className="text-xs text-slate-500">Save data to JSON file</span>
+                </div>
+              </button>
+
+              <button
+                onClick={handleImportClick}
+                className="flex flex-col items-center justify-center gap-3 p-6 bg-slate-800/50 hover:bg-slate-800 border border-slate-700 rounded-xl transition-all group"
+              >
+                <div className="p-3 bg-purple-500/10 rounded-full text-purple-400 group-hover:bg-purple-500 group-hover:text-white transition-colors">
+                  <Upload size={24} />
+                </div>
+                <div className="text-center">
+                  <span className="block font-medium text-slate-200">Import Backup</span>
+                  <span className="text-xs text-slate-500">Restore from JSON file</span>
+                </div>
+              </button>
+              <input 
+                type="file" 
+                ref={fileInputRef} 
+                onChange={handleFileChange} 
+                accept=".json" 
+                className="hidden" 
+              />
+            </div>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-400 mb-1">Site Logo URL (Optional)</label>
-            <input 
-              type="text"
-              value={settingsData.logoUrl}
-              onChange={(e) => setSettingsData({...settingsData, logoUrl: e.target.value})}
-              className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
-              placeholder="e.g. https://example.com/logo.png"
-            />
-            <p className="text-xs text-slate-500 mt-1">Leave empty to use the default letter icon.</p>
-          </div>
-          <div className="pt-4 flex justify-end gap-3">
-             <button
-               type="button"
-               onClick={() => setIsSettingsModalOpen(false)}
-               className="px-4 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-             >
-               Cancel
-             </button>
-             <button
-               type="submit"
-               className="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium shadow-lg shadow-blue-500/20 transition-all"
-             >
-               Save Settings
-             </button>
-          </div>
-        </form>
+        )}
       </Modal>
 
       {/* Edit/Add Link Modal */}

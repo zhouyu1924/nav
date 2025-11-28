@@ -1,11 +1,11 @@
-import { LinkItem, DEFAULT_LINKS, SiteConfig } from '../types';
+import { LinkItem, DEFAULT_LINKS, SiteConfig, BackupData } from '../types';
 
 const LINKS_KEY = 'nebula_links';
 const AUTH_KEY = 'nebula_auth';
 const CONFIG_KEY = 'nebula_config';
 
 const DEFAULT_CONFIG: SiteConfig = {
-  title: 'Nebula Nav',
+  title: 'Zhou Yu Nav',
   logoUrl: ''
 };
 
@@ -45,8 +45,7 @@ export const StorageService = {
     }
   },
 
-  // Security Note: For a static client-side app, we store the password in local storage.
-  // In a real production app with a backend, this would be a session token.
+  // Auth Methods
   setPassword: (password: string) => {
     localStorage.setItem(AUTH_KEY, password);
   },
@@ -60,8 +59,33 @@ export const StorageService = {
     return !!localStorage.getItem(AUTH_KEY);
   },
   
+  // Data Management
+  createBackup: (links: LinkItem[], config: SiteConfig): string => {
+    const backup: BackupData = {
+      version: 1,
+      date: Date.now(),
+      links,
+      siteConfig: config
+    };
+    return JSON.stringify(backup, null, 2);
+  },
+
+  processBackup: (jsonContent: string): BackupData | null => {
+    try {
+      const data = JSON.parse(jsonContent);
+      // Basic validation
+      if (!Array.isArray(data.links) || !data.siteConfig) {
+        throw new Error("Invalid backup format");
+      }
+      return data as BackupData;
+    } catch (e) {
+      console.error("Failed to parse backup", e);
+      return null;
+    }
+  },
+
   logout: () => {
-     // For this simple app, we manage auth state in React context, 
-     // but we could clear session tokens here if we had them.
+    // Session is handled in React state, nothing to clear from localstorage usually
+    // unless we were using tokens.
   }
 };

@@ -14,7 +14,12 @@ import {
   Lock,
   Menu,
   MoreVertical,
-  Globe
+  Globe,
+  Download,
+  Upload,
+  Shield,
+  FileJson,
+  AlertTriangle
 } from 'lucide-react';
 
 export {
@@ -33,5 +38,10 @@ export {
   Lock,
   Menu,
   MoreVertical,
-  Globe
+  Globe,
+  Download,
+  Upload,
+  Shield,
+  FileJson,
+  AlertTriangle
 };
